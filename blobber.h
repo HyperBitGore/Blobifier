@@ -5,8 +5,7 @@
 #include <sstream>
 #include <string>
 
-//basic non-compressed blobs
-// -generate c header for blobs so you can just include them in ur project
+//cleanup/polish
 //add compression
 // -common lossless formats
 // -common lossy formats
@@ -217,7 +216,61 @@ namespace Gore {
 				dst[j] = str[i];
 			}
 		}
-		
+		static std::string pruneQuotes(std::string str) {
+			std::string ret;
+			for (auto& i : str) {
+				if (i == '\"') {
+					ret.push_back('\\');
+					ret.push_back('x');
+					ret.push_back('2');
+					ret.push_back('2');
+				}
+				else {
+					ret.push_back(i);
+				}
+			}
+			return ret;
+		}
+		static std::string convertFileToHexArray(std::string file_path) {
+			std::ifstream f;
+			f.open(file_path);
+			std::stringstream sstr;
+			std::string line;
+			int i = 0;
+			while (std::getline(f, line)) {
+				for (int j = 0; j < line.size(); j++) {
+					sstr << "0x" << std::hex << (int)line[j] << ",";
+					i++;
+					if (i >= 10) {
+						sstr << "\n";
+						i = 0;
+					}
+				}
+			}
+
+			f.close();
+			std::string str(sstr.str());
+			return str;
+		}
+		static std::string convertStringToHexArray(std::string str) {
+			std::stringstream sstr;
+			for (int i = 0; i < str.size(); i++) {
+				sstr << "0x" << std::hex << (int)str[i] << ",";
+				if (i % 10 == 0) {
+					sstr << "\n";
+				}
+			}
+			return std::string(sstr.str());
+		}
+		static std::string convertSizetString(size_t n) {
+			std::string m;
+			char* t = (char*)&n;
+			for (int i = 0; i < sizeof(n); i++) {
+				m.push_back(t[i]);
+			}
+			return m;
+		}
+
 	public:
 		//turns a list of files into blob
 		static Blob* blobifiy(std::vector<File> files) {
@@ -302,6 +355,7 @@ namespace Gore {
 				f2.open(i.path, std::ios::binary);
 				std::string str;
 				while (std::getline(f2, str)) {
+					//prune the " into \\x22
 					writeDataPos(data, (char*)str.c_str(), str.size(), &pos);
 					if (!f2.eof() && !f2.fail()) {
 						char c = '\n';
@@ -316,45 +370,88 @@ namespace Gore {
 			return {dst, block_size};
 		}
 		//writes the blob as header file to the file path
-		static bool writeAsHeader(Blob* blob, std::string file_path) {
+		static bool writeAsHeader(Blob* blob, std::string file_path, std::string block_name) {
+			//writeBlob(blob, "temp.blob");
+			//std::string converted = convertFileToHexArray("temp.blob");
+			//remove("temp.blob");
 			std::ofstream f;
 			f.open(file_path, std::ios::binary);
 			if (!f) {
 				return false;
 			}
+			size_t file_size = 1;
+			for (auto& i : blob->getFiles()) {
+				file_size += getFileSize(i.path);
+				file_size += getFileName(i.path).size() + (sizeof(size_t) * 2);
+			}
+			file_size += 14;
 			//writing the basic c header stuff
-			
+			f << "#include <stdlib.h>\n#include <stdio.h>\n#include <string.h>\n";
+			//writing the char* and the function
+			//f << "unsigned char* " + block_name + " = (unsigned char*)\"\";\n";
+			f << "unsigned char* load" + block_name + " (){ \n";
 
+			f << "unsigned char temp[ " + std::to_string(file_size) + "] = {\n";
 			//header will contain name of file then the size of the file, and then the offset in the file
 			size_t cur_offset = 0; //offset after header
 			size_t head_offset = 0;
 			//write the header for each file
 			for (auto& i : blob->getFiles()) {
-				f << getFileName(i.path);
+				f << convertStringToHexArray(getFileName(i.path));
+				//f << getFileName(i.path);
 				size_t size = getFileSize(i.path);
-				f.write((char*)&size, sizeof(size));
+				
+				f << convertStringToHexArray(convertSizetString(size));
+				//f.write((char*)&size, sizeof(size));
 				//f << size;
-				f.write((char*)&cur_offset, sizeof(cur_offset));
+				
+				f << convertStringToHexArray(convertSizetString(cur_offset));
+				//f.write((char*)&cur_offset, sizeof(cur_offset));
 				//f << cur_offset;
 				head_offset += (i.path.size()) + sizeof(size_t) * 2; //bytes for the size and offset
 				cur_offset += size;
 			}
-			f << "\nend of header\n";
+			f << convertStringToHexArray("\nend of header\n");
 			//write the data based on location in blob
 			for (auto& i : blob->getFiles()) {
 				std::ifstream f2;
 				f2.open(i.path, std::ios::binary);
 				std::string str;
 				while (std::getline(f2, str)) {
-					f << str;
+					//str = pruneQuotes(str);
 					if (!f2.eof() && !f2.fail()) {
-						f << '\n';
+						//f << "\\";
+						//f << "\n";
+						str.push_back('\n');
 					}
+					std::string str2 = convertStringToHexArray(str);
+					f << str2;
+					/*for (auto& i : str) {
+						if (i == '\r') {
+							f << '\\';
+							//f << '\r';
+						}
+						else {
+							f << i;
+						}
+						
+					}*/
+					//f << str;
+					/*if (!f2.eof() && !f2.fail()) {
+						//f << "\\";
+						f << "\n";
+					}*/
 				}
 				f2.close();
 			}
 			//writing the end of the char* and the final stuff needed for the rest of the header
-
+			//f << "\";\n";
+			f << "};\n";
+			f << "unsigned char* " + block_name + " = (unsigned char*)malloc(" + std::to_string(file_size) + ");\n";
+			f << "for(int i = 0; i < " + std::to_string(file_size) + ";i++){\n";
+			f << block_name + "[i] = temp[i];\n";
+			f << "}\n";
+			f << "return " + block_name + ";\n}";
 			f.close();
 			return true;
 		}
@@ -419,6 +516,9 @@ namespace Gore {
 			}
 			f2.close();
 			f.close();
+		}
+		static std::string checkHexArray(std::string file) {
+			return convertFileToHexArray(file);
 		}
 	};
 

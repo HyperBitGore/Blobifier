@@ -1,4 +1,9 @@
 #include "blobber.h"
+#pragma warning(push, 0)
+// Some include(s) with unfixable warnings
+#include "testblob.h"
+#pragma warning(pop)
+
 
 
 int main() {
@@ -37,7 +42,18 @@ int main() {
 		}
 		f.close();
 	}
-
-	
+	unsigned char* t = loadtest_blob();
+	Gore::RetFile r4 = Gore::Blobber::getFile(t, 300303, "FinalProject.zip");
+	f.open("test24.zip", std::ios::binary);
+	for (size_t i = 0; i < r4.size; i++) {
+		f << ((char*)r4.dat)[i];
+	}
+	f.close();
+	//int t = '\"';
+	//std::cout << t << "\n";
+	//Gore::Blob* b2 = Gore::Blobber::blobifiy({ {"test.txt", ""}, {"FinalProject.zip", ""}, {"test2.txt", ""}});
+	//Gore::Blobber::writeAsHeader(b2, "testblob.h", "test_blob");
+	//std::string tem = Gore::Blobber::checkHexArray("test.txt");
+	//std::cout << tem << "\n";
 	return 0;
 }
