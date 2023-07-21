@@ -5,14 +5,15 @@
 #include <sstream>
 #include <string>
 
-//cleanup/polish
+
 //add compression
 // -common lossless formats
 // -common lossy formats
 //mix compressed and non compressed files in a blob
+//make gui where you can generate blobs and basic one file headers
 
+namespace blob {
 
-namespace Gore {
 	struct File {
 		std::string path;
 		std::string compression;
@@ -23,61 +24,30 @@ namespace Gore {
 		size_t size;
 	};
 
-	class Blob {
-	private:
-		std::vector<File> files;
-	public:
-		void addFile(File f) {
-			files.push_back(f);
-		}
-		std::vector<File>& getFiles() {
-			return files;
-		}
-	};
 
-	class Blobber {
+	class load {
 	private:
-		static size_t getFileSize(std::string path) {
-			std::ifstream f;
-			f.open(path, std::ios::binary);
-			if (f) {
-				size_t s = 0;
-				std::string str;
-				while (std::getline(f, str)) {
-					s += str.size();
-					if (!f.eof() && !f.fail()) {
-						s++;
-					}
-				}
-				f.close();
-				return s;
+		//data reading
+		static void readDataPos(char* data, char* src, size_t size, size_t* pos) {
+			for (size_t i = 0; i < size; i++, (*pos)++) {
+				data[i] = src[*pos];
 			}
-			return 0;
 		}
-		static size_t countOccur(std::string str, char c) {
-			size_t count = 0;
-			for (auto& i : str) {
-				if (i == c) {
-					count++;
-				}
+		static std::string readNewLine(char* dst, size_t size, size_t* pos) {
+			std::string str = "";
+			for (size_t i = *pos; dst[i] != '\n' && i < size; i++) {
+				str.push_back(dst[i]);
 			}
-			return count;
-		}
-		static std::string getFileName(std::string path) {
-			size_t pos = 0;
-			size_t c = countOccur(path, '\\');
-			for (pos; pos < path.size() && c > 0; pos++) {
-				if (path[pos] == '\\') {
-					c--;
-				}
-			}
-			std::string str;
-			for (pos; pos < path.size(); pos++) {
-				str.push_back(path[pos]);
-			}
+			*pos += str.size() + 1;
 			return str;
 		}
-		
+		static void readDataFromString(std::string str, char* dst, size_t size, size_t pos) {
+			size_t j = 0;
+			for (size_t i = pos; i < str.size() && j < size; i++, j++) {
+				dst[j] = str[i];
+			}
+		}
+		//file header reading
 		static size_t getFileOffsetHeader(std::string path, std::string name) {
 			std::ifstream f;
 			f.open(path, std::ios::binary);
@@ -92,7 +62,7 @@ namespace Gore {
 					p += name.size() + sizeof(size_t); //skipping file size
 					break;
 				}
-				
+
 			}
 			f.seekg(p);
 			size_t off = 0;
@@ -141,7 +111,7 @@ namespace Gore {
 			f.close();
 		}
 		static size_t getFileOffsetHeader(void* dst, size_t size, std::string name) {
-			
+
 			std::string str;
 			size_t p = 0;
 			while (true) {
@@ -153,14 +123,14 @@ namespace Gore {
 				}
 			}
 
-			
+
 			size_t off = 0;
 			readDataFromString(str, (char*)&off, sizeof(off), p);
-			
+
 			return off;
 		}
 		static size_t getFileSizeHeader(void* dst, size_t size, std::string name) {
-			
+
 			std::string str;
 			size_t p = 0;
 			while (true) {
@@ -185,11 +155,119 @@ namespace Gore {
 					return siz;
 				}
 				siz += str.size() + 1;
-				
+
 			}
 			return siz;
-			
+
 		}
+	public:
+		//reads file from blob, from disk
+		static RetFile getFile(std::string path, std::string name, bool text = false) {
+			size_t size = getFileSizeHeader(path, name);
+			size_t offset = getFileOffsetHeader(path, name);
+			size_t header_size = getFileHeaderSize(path, name);
+			header_size += 14; //skipping the last \n
+			std::ifstream f;
+			if (text) {
+				f.open(path);
+			}
+			else {
+				f.open(path, std::ios::binary);
+			}
+			//have to skip past the header
+			//now going to offset from there
+			RetFile file;
+			f.seekg(header_size + offset);
+			void* dst = std::malloc(size);
+			f.read((char*)dst, size);
+			file.dat = dst;
+			file.size = size;
+			f.close();
+			return file;
+		}
+		//reads file from blob, from memory
+		static RetFile getFile(void* loc, size_t siz, std::string name) {
+			size_t size = getFileSizeHeader(loc, siz, name);
+			size_t offset = getFileOffsetHeader(loc, siz, name);
+			size_t header_size = getFileHeaderSize(loc, siz, name);
+			header_size += 14; //skipping the last \n
+			//have to skip past the header
+			//now going to offset from there
+			RetFile file;
+			void* dst = std::malloc(size);
+			size_t pos = header_size + offset;
+			readDataPos((char*)dst, (char*)loc, size, &pos);
+			file.dat = dst;
+			file.size = size;
+
+			return file;
+		}
+		//extracts a file and writes it to disk
+		static void extractBlobAndWrite(std::string path, std::string name, std::string writepath) {
+			size_t size = getFileSizeHeader(path, name);
+			size_t offset = getFileOffsetHeader(path, name);
+			size_t header_size = getFileHeaderSize(path, name);
+			header_size += 14; //skipping the last \n
+			std::ifstream f;
+			f.open(path, std::ios::binary);
+			//have to skip past the header
+			//now going to offset from there
+			f.seekg(header_size + offset);
+			std::ofstream f2;
+			f2.open(writepath, std::ios::binary);
+			for (size_t i = 0; i < size; i++) {
+				char c;
+				f.read(&c, 1);
+				f2 << c;
+			}
+			f2.close();
+			f.close();
+		}
+	};
+
+	
+
+	class Blob {
+	private:
+		std::vector<File> files;
+	public:
+		void addFile(File f) {
+			files.push_back(f);
+		}
+		std::vector<File>& getFiles() {
+			return files;
+		}
+	};
+
+	class write {
+	private:
+		static size_t getFileSize(std::string path) {
+			std::ifstream f;
+			f.open(path, std::ios::binary);
+			if (f) {
+				size_t s = 0;
+				std::string str;
+				while (std::getline(f, str)) {
+					s += str.size();
+					if (!f.eof() && !f.fail()) {
+						s++;
+					}
+				}
+				f.close();
+				return s;
+			}
+			return 0;
+		}
+		static size_t countOccur(std::string str, char c) {
+			size_t count = 0;
+			for (auto& i : str) {
+				if (i == c) {
+					count++;
+				}
+			}
+			return count;
+		}
+		
 
 		static void writeDataPos(char* data, char* cpy, size_t size, size_t* pos) {
 			for (size_t i = 0; i < size; i++) {
@@ -197,40 +275,7 @@ namespace Gore {
 			}
 			*pos += size;
 		}
-		static void readDataPos(char* data, char* src, size_t size, size_t* pos) {
-			for (size_t i = 0; i < size; i++, (*pos)++) {
-				data[i] = src[*pos];
-			}
-		}
-		static std::string readNewLine(char* dst, size_t size, size_t* pos) {
-			std::string str = "";
-			for (size_t i = *pos; dst[i] != '\n' && i < size; i++) {
-				str.push_back(dst[i]);
-			}
-			*pos += str.size() + 1;
-			return str;
-		}
-		static void readDataFromString(std::string str, char* dst, size_t size, size_t pos) {
-			size_t j = 0;
-			for (size_t i = pos; i < str.size() && j < size; i++, j++) {
-				dst[j] = str[i];
-			}
-		}
-		static std::string pruneQuotes(std::string str) {
-			std::string ret;
-			for (auto& i : str) {
-				if (i == '\"') {
-					ret.push_back('\\');
-					ret.push_back('x');
-					ret.push_back('2');
-					ret.push_back('2');
-				}
-				else {
-					ret.push_back(i);
-				}
-			}
-			return ret;
-		}
+		
 		static std::string convertFileToHexArray(std::string file_path) {
 			std::ifstream f;
 			f.open(file_path);
@@ -271,6 +316,20 @@ namespace Gore {
 			return m;
 		}
 
+		static std::string getFileName(std::string path) {
+			size_t pos = 0;
+			size_t c = countOccur(path, '\\');
+			for (pos; pos < path.size() && c > 0; pos++) {
+				if (path[pos] == '\\') {
+					c--;
+				}
+			}
+			std::string str;
+			for (pos; pos < path.size(); pos++) {
+				str.push_back(path[pos]);
+			}
+			return str;
+		}
 	public:
 		//turns a list of files into blob
 		static Blob* blobifiy(std::vector<File> files) {
@@ -371,9 +430,6 @@ namespace Gore {
 		}
 		//writes the blob as header file to the file path
 		static bool writeAsHeader(Blob* blob, std::string file_path, std::string block_name) {
-			//writeBlob(blob, "temp.blob");
-			//std::string converted = convertFileToHexArray("temp.blob");
-			//remove("temp.blob");
 			std::ofstream f;
 			f.open(file_path, std::ios::binary);
 			if (!f) {
@@ -386,9 +442,8 @@ namespace Gore {
 			}
 			file_size += 14;
 			//writing the basic c header stuff
-			f << "#include <stdlib.h>\n#include <stdio.h>\n#include <string.h>\n";
+			f << "#include <stdlib.h>\n";
 			//writing the char* and the function
-			//f << "unsigned char* " + block_name + " = (unsigned char*)\"\";\n";
 			f << "unsigned char* load" + block_name + " (){ \n";
 
 			f << "unsigned char temp[ " + std::to_string(file_size) + "] = {\n";
@@ -418,29 +473,12 @@ namespace Gore {
 				f2.open(i.path, std::ios::binary);
 				std::string str;
 				while (std::getline(f2, str)) {
-					//str = pruneQuotes(str);
 					if (!f2.eof() && !f2.fail()) {
-						//f << "\\";
-						//f << "\n";
+						
 						str.push_back('\n');
 					}
 					std::string str2 = convertStringToHexArray(str);
 					f << str2;
-					/*for (auto& i : str) {
-						if (i == '\r') {
-							f << '\\';
-							//f << '\r';
-						}
-						else {
-							f << i;
-						}
-						
-					}*/
-					//f << str;
-					/*if (!f2.eof() && !f2.fail()) {
-						//f << "\\";
-						f << "\n";
-					}*/
 				}
 				f2.close();
 			}
@@ -455,71 +493,47 @@ namespace Gore {
 			f.close();
 			return true;
 		}
-		//reads file from blob, from disk
-		static RetFile getFile(std::string path, std::string name, bool text = false) {
-			size_t size = getFileSizeHeader(path, name);
-			size_t offset = getFileOffsetHeader(path, name);
-			size_t header_size = getFileHeaderSize(path, name);
-			header_size += 14; //skipping the last \n
-			std::ifstream f;
-			if (text) {
-				f.open(path);
+		//writes a single file into a c header file
+		static bool writeFileHeader(std::string file, std::string dest, std::string block_name) {
+			std::ofstream f;
+			f.open(dest);
+			if (!f) {
+				return false;
 			}
-			else {
-				f.open(path, std::ios::binary);
+			//writing the basic c header stuff
+			f << "#include <stdlib.h>\n";
+			//writing the char* and the function
+			f << "unsigned char* load" + block_name + " (){ \n";
+			size_t file_size = getFileSize(file);
+			f << "unsigned char temp[ " + std::to_string(file_size) + "] = {\n";
+			//writing the file into the array
+			std::ifstream f2;
+			f2.open(file, std::ios::binary);
+			if (!f2) {
+				return false;
 			}
-			//have to skip past the header
-			//now going to offset from there
-			RetFile file;
-			f.seekg(header_size + offset);
-			void* dst = std::malloc(size);
-			f.read((char*)dst, size);
-			file.dat = dst;
-			file.size = size;
-			f.close();
-			return file;
-		}
-		//reads file from blob, from memory
-		static RetFile getFile(void* loc, size_t siz, std::string name) {
-			size_t size = getFileSizeHeader(loc, siz, name);
-			size_t offset = getFileOffsetHeader(loc, siz, name);
-			size_t header_size = getFileHeaderSize(loc, siz, name);
-			header_size += 14; //skipping the last \n
-			//have to skip past the header
-			//now going to offset from there
-			RetFile file;
-			void* dst = std::malloc(size);
-			size_t pos = header_size + offset;
-			readDataPos((char*)dst, (char*)loc, size, &pos);
-			file.dat = dst;
-			file.size = size;
-			
-			return file;
-		}
-		
-		static void extractBlobAndWrite(std::string path, std::string name, std::string writepath) {
-			size_t size = getFileSizeHeader(path, name);
-			size_t offset = getFileOffsetHeader(path, name);
-			size_t header_size = getFileHeaderSize(path, name);
-			header_size += 14; //skipping the last \n
-			std::ifstream f;
-			f.open(path, std::ios::binary);
-			//have to skip past the header
-			//now going to offset from there
-			f.seekg(header_size + offset);
-			std::ofstream f2;
-			f2.open(writepath, std::ios::binary);
-			for (size_t i = 0; i < size; i++) {
-				char c;
-				f.read(&c, 1);
-				f2 << c;
+			std::string str;
+			while (std::getline(f2, str)) {
+				if (!f2.eof() && !f2.fail()) {
+					str.push_back('\n');
+				}
+				std::string str2 = convertStringToHexArray(str);
+				f << str2;
 			}
 			f2.close();
+			f << "};\n";
+			f << "unsigned char* " + block_name + " = (unsigned char*)malloc(" + std::to_string(file_size) + ");\n";
+			f << "for(int i = 0; i < " + std::to_string(file_size) + ";i++){\n";
+			f << block_name + "[i] = temp[i];\n";
+			f << "}\n";
+			f << "return " + block_name + ";\n}";
+
 			f.close();
+			return true;
 		}
-		static std::string checkHexArray(std::string file) {
-			return convertFileToHexArray(file);
-		}
+		
+		
+		
 	};
 
 
