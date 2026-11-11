@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <iostream>
 #include <vector>
 #include <fstream>
@@ -19,7 +20,7 @@ namespace blob {
 		std::string compression;
 	};
 
-	struct RetFile {
+	struct BlobData {
 		void* dat;
 		size_t size;
 	};
@@ -162,7 +163,7 @@ namespace blob {
 		}
 	public:
 		//reads file from blob, from disk
-		static RetFile getFile(std::string path, std::string name, bool text = false) {
+		static BlobData getFile(std::string path, std::string name, bool text = false) {
 			size_t size = getFileSizeHeader(path, name);
 			size_t offset = getFileOffsetHeader(path, name);
 			size_t header_size = getFileHeaderSize(path, name);
@@ -176,7 +177,7 @@ namespace blob {
 			}
 			//have to skip past the header
 			//now going to offset from there
-			RetFile file;
+			BlobData file;
 			f.seekg(header_size + offset);
 			void* dst = std::malloc(size);
 			f.read((char*)dst, size);
@@ -186,14 +187,14 @@ namespace blob {
 			return file;
 		}
 		//reads file from blob, from memory
-		static RetFile getFile(void* loc, size_t siz, std::string name) {
+		static BlobData getFile(void* loc, size_t siz, std::string name) {
 			size_t size = getFileSizeHeader(loc, siz, name);
 			size_t offset = getFileOffsetHeader(loc, siz, name);
 			size_t header_size = getFileHeaderSize(loc, siz, name);
 			header_size += 14; //skipping the last \n
 			//have to skip past the header
 			//now going to offset from there
-			RetFile file;
+			BlobData file;
 			void* dst = std::malloc(size);
 			size_t pos = header_size + offset;
 			readDataPos((char*)dst, (char*)loc, size, &pos);
@@ -319,16 +320,60 @@ namespace blob {
 		static std::string getFileName(std::string path) {
 			size_t pos = 0;
 			size_t c = countOccur(path, '\\');
-			for (pos; pos < path.size() && c > 0; pos++) {
+			for (; pos < path.size() && c > 0; pos++) {
 				if (path[pos] == '\\') {
 					c--;
 				}
 			}
 			std::string str;
-			for (pos; pos < path.size(); pos++) {
+			for (; pos < path.size(); pos++) {
 				str.push_back(path[pos]);
 			}
 			return str;
+		}
+		static bool blobWrite (Blob* blob, std::function<void(char*, size_t)> writeFunction) {
+			//header will contain name of file then the size of the file, and then the offset in the file
+			size_t cur_offset = 0; //offset after header
+			size_t head_offset = 0;
+			//get block size needed
+			size_t block_size = 0;
+			for (auto& i : blob->getFiles()) {
+				block_size += getFileSize(i.path);
+				block_size += getFileName(i.path).size() + (sizeof(size_t) * 2);
+			}
+			block_size += sizeof("\nend of header\n");
+			std::cout << "size: " << block_size << "\n";
+			//write the header for each file
+			for (auto& i : blob->getFiles()) {
+				std::string name = getFileName(i.path);
+				writeFunction((char*)name.c_str(), name.size());
+				size_t size = getFileSize(i.path);
+				writeFunction((char*)&size, sizeof(size));
+				//f << size;
+				writeFunction((char*)&cur_offset, sizeof(cur_offset));
+				//f << cur_offset;
+				head_offset += (i.path.size()) + sizeof(size_t) * 2; //bytes for the size and offset
+				cur_offset += size;
+			}
+			writeFunction((char*)"\nend of header\n", sizeof("\nend of header\n"));
+			//write the data based on location in blob
+			for (auto& i : blob->getFiles()) {
+				std::ifstream f2;
+				f2.open(i.path, std::ios::binary);
+				std::string str;
+				while (std::getline(f2, str)) {
+					//prune the " into \\x22
+					writeFunction((char*)str.c_str(), str.size());
+					if (!f2.eof() && !f2.fail()) {
+						char c = '\n';
+						writeFunction(&c, 1);
+					}
+				}
+				f2.close();
+			}
+
+
+			return true;
 		}
 	public:
 		//turns a list of files into blob
@@ -378,7 +423,7 @@ namespace blob {
 			return true;
 		}
 		//for creating blobs in memory, generates the memory for you
-		static RetFile writeBlob(Blob* blob) {
+		static BlobData writeBlob(Blob* blob) {
 			//header will contain name of file then the size of the file, and then the offset in the file
 			size_t cur_offset = 0; //offset after header
 			size_t head_offset = 0;
