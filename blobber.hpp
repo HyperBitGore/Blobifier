@@ -179,7 +179,7 @@ namespace blob {
 			//now going to offset from there
 			BlobData file;
 			f.seekg(header_size + offset);
-			void* dst = std::malloc(size);
+			void* dst = new char[size];
 			f.read((char*)dst, size);
 			file.dat = dst;
 			file.size = size;
@@ -341,7 +341,8 @@ namespace blob {
 				block_size += getFileSize(i.path);
 				block_size += getFileName(i.path).size() + (sizeof(size_t) * 2);
 			}
-			block_size += sizeof("\nend of header\n");
+			constexpr char headerEnd[] = "\nend of header\n";
+			block_size += sizeof(headerEnd) - 1;
 			std::cout << "size: " << block_size << "\n";
 			//write the header for each file
 			for (auto& i : blob->getFiles()) {
@@ -355,7 +356,7 @@ namespace blob {
 				head_offset += (i.path.size()) + sizeof(size_t) * 2; //bytes for the size and offset
 				cur_offset += size;
 			}
-			writeFunction((char*)"\nend of header\n", sizeof("\nend of header\n"));
+			writeFunction((char*)headerEnd, sizeof(headerEnd) - 1);
 			//write the data based on location in blob
 			for (auto& i : blob->getFiles()) {
 				std::ifstream f2;
@@ -391,36 +392,10 @@ namespace blob {
 			if (!f) {
 				return false;
 			}
-			//header will contain name of file then the size of the file, and then the offset in the file
-			size_t cur_offset = 0; //offset after header
-			size_t head_offset = 0;
-			//write the header for each file
-			for (auto& i : blob->getFiles()) {
-				f << getFileName(i.path);
-				size_t size = getFileSize(i.path);
-				f.write((char*)&size, sizeof(size));
-				//f << size;
-				f.write((char*)&cur_offset, sizeof(cur_offset));
-				//f << cur_offset;
-				head_offset += (i.path.size()) + sizeof(size_t) * 2; //bytes for the size and offset
-				cur_offset += size;
-			}
-			f << "\nend of header\n";
-			//write the data based on location in blob
-			for (auto& i : blob->getFiles()) {
-				std::ifstream f2;
-				f2.open(i.path, std::ios::binary);
-				std::string str;
-				while (std::getline(f2, str)) {
-					f << str;
-					if (!f2.eof() && !f2.fail()) {
-						f << '\n';
-					}
-				}
-				f2.close();
-			}
-			f.close();
-			return true;
+			auto writeToFile = [&] (char* data, size_t size) {
+				f.write(data, size);
+			};
+			return blobWrite(blob, writeToFile);
 		}
 		//for creating blobs in memory, generates the memory for you
 		static BlobData writeBlob(Blob* blob) {
@@ -435,43 +410,13 @@ namespace blob {
 			}
 			block_size += sizeof("\nend of header\n");
 			std::cout << "size: " << block_size << "\n";
-			void* dst = new char[block_size];
-			//*dst = std::malloc(block_size);
-			char* data = (char*)dst;
-			//write the header for each file
-			size_t pos = 0;
-			for (auto& i : blob->getFiles()) {
-				std::string str = getFileName(i.path);
-				writeDataPos(data, (char*)str.c_str(), str.size(), &pos);
-				size_t size2 = getFileSize(i.path);
-				writeDataPos(data,(char*)&size2, sizeof(size2), &pos);
-				//f << size;
-				writeDataPos(data, (char*)&cur_offset, sizeof(cur_offset), &pos);
-				//f << cur_offset;
-				head_offset += (i.path.size()) + (sizeof(size_t) * 2); //bytes for the size and offset
-				cur_offset += size2;
-			}
-			std::string temp = "\nend of header\n";
-			writeDataPos(data, (char*)temp.c_str(), temp.size(), &pos);
-			//write the data based on location in blob
-			for (auto& i : blob->getFiles()) {
-				std::ifstream f2;
-				f2.open(i.path, std::ios::binary);
-				std::string str;
-				while (std::getline(f2, str)) {
-					//prune the " into \\x22
-					writeDataPos(data, (char*)str.c_str(), str.size(), &pos);
-					if (!f2.eof() && !f2.fail()) {
-						char c = '\n';
-						writeDataPos(data, &c, 1, &pos);
-					}
-					//std::cout << pos << '\n';
-				}
-				f2.close();
-			}
-
-
-			return {dst, block_size};
+			char* data = new char[block_size];
+				size_t pos = 0;
+			auto writeData = [&](char* n_data, size_t size) {
+				writeDataPos(data, n_data, size, &pos);
+			};
+			blobWrite(blob, writeData);
+			return {(void*)data, block_size};
 		}
 		//writes the blob as header file to the file path
 		static bool writeAsHeader(Blob* blob, std::string file_path, std::string block_name) {
@@ -583,4 +528,3 @@ namespace blob {
 
 
 }
-

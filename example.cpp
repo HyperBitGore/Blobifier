@@ -29,7 +29,7 @@ void freeBlobData(blob::BlobData file) {
 	delete[] static_cast<char*>(file.dat);
 }
 
-} // namespace
+}
 
 int main() {
 	const auto dir = std::filesystem::temp_directory_path() / "blobifier-integrity-test";
