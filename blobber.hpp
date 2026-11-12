@@ -1,6 +1,9 @@
 #pragma once
+#include <cstddef>
+#include <filesystem>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <vector>
 #include <fstream>
 #include <sstream>
@@ -528,3 +531,181 @@ namespace blob {
 
 
 }
+
+// TODO:
+// - add load function
+// - add header function
+// - convert tests
+// - add compression
+// - cli blobbing program 
+
+class blob2 {
+	private:
+		class member {
+			public:
+			std::string compression;
+			std::string name;
+			size_t size;
+			member (std::string compression, size_t size, std::string name) {
+				this->compression = compression;
+				this->size = size;
+				this->name = name;
+			}
+			virtual std::vector<uint8_t> read() = 0;
+		};
+		class file_member : public member {
+			public:
+			std::filesystem::path path;
+			file_member (std::string compression, size_t size, std::string name, std::filesystem::path path) : member (compression, size, name) {
+				this->path = path;
+			} 
+			std::vector<uint8_t> read() override {
+				std::ifstream file (path, std::ios::binary);
+				if (!file) {
+					return {};
+				}
+				uint8_t* data = new uint8_t[size];
+				file.read((char*)data, size);
+				file.close();
+				std::vector<uint8_t> dat(data, data + size);
+				delete[] data;
+				return dat;
+			}
+		};
+		class data_member : public member {
+			public:
+			std::vector<uint8_t> dat;
+			data_member (std::string compression, size_t size, std::string name, std::vector<uint8_t> dat) : member (compression, size, name) {
+				this->dat = dat;
+			}
+			std::vector<uint8_t> read() override {
+				return dat;
+			}
+		};
+		class blob_member : public member {
+			public:
+			size_t offset;
+			std::filesystem::path path;
+			blob_member (std::string compression, size_t size, std::string name, size_t offset, std::filesystem::path path) : member (compression, size, name) {
+				this->offset = offset;
+				this->path = path;
+			}
+			std::vector<uint8_t> read() override {
+				std::ifstream file (path, std::ios::binary);
+				if (!file) {
+					return {};
+				}
+				uint8_t* data = new uint8_t[size];
+				file.seekg(offset);
+				file.read((char*)data, size);
+				file.close();
+				std::vector<uint8_t> dat(data, data + size);
+				delete[] data;
+				return dat;
+			}
+		};
+		bool write (std::function<void(uint8_t*, size_t)> writeFunction) {
+			size_t cur_offset = 0; //offset after header
+			size_t head_offset = 0;
+			size_t block_size = blob_size;
+			constexpr char headerEnd[] = "\nend of header\n";
+			block_size += sizeof(headerEnd) - 1;
+			std::cout << "size: " << block_size << "\n";
+			//write the header for each file
+			for (auto& i : members) {
+				writeFunction((uint8_t*)i->name.c_str(), i->name.size());
+				writeFunction((uint8_t*)&(i->size), sizeof(i->size));
+				writeFunction((uint8_t*)&cur_offset, sizeof(cur_offset));
+				head_offset += (i->name.size()) + sizeof(size_t) * 2; //bytes for the size and offset
+				cur_offset += i->size;
+			}
+			writeFunction((uint8_t*)headerEnd, sizeof(headerEnd) - 1);
+			// write data blocks
+			for (auto& i : members) {
+				auto data = i->read();
+				writeFunction((uint8_t*)data.data(), data.size());
+			}
+			return true;
+		}
+		std::vector<std::unique_ptr<member>> members;
+		size_t blob_size = 0;
+	public:
+		blob2 () = default;
+
+		// move
+		blob2 (blob2&& b) {
+			this->members = std::move(b.members);
+			this->blob_size = b.blob_size;
+		}
+		blob2& operator=(blob2&& b) {
+			this->members = std::move(b.members);
+			this->blob_size = b.blob_size;
+			return *this;
+		}
+
+		// blob manipulation
+		void addFile (std::filesystem::path path, std::string name) {
+			size_t size = std::filesystem::file_size(path);
+			blob_size += size;
+			std::unique_ptr<file_member> member = std::make_unique<file_member>("none", size, name, path);
+			members.push_back(std::move(member));
+		}
+		void addFile (std::vector<uint8_t> data, std::string name) {
+			blob_size += data.size();
+			std::unique_ptr<data_member> member = std::make_unique<data_member>("none", data.size(), name, data);
+			members.push_back(std::move(member));
+		}
+		void addFile (uint8_t* data, size_t size, std::string name) {
+			std::vector<uint8_t> n_data(data, data + size);
+			blob_size += size;
+			std::unique_ptr<data_member> member = std::make_unique<data_member>("none", n_data.size(), name, n_data);
+			members.push_back(std::move(member));
+		}
+		// file loading/writing
+		bool serialize (std::filesystem::path save_path) {
+			std::ofstream file (save_path, std::ios::binary);
+			if (!file) {
+				return true;
+			}
+			auto writeFunction = [&](uint8_t* data, size_t size) {
+				file.write((char*)data, size);
+			};
+			bool writeSucces = write(writeFunction);
+
+			file.close();
+			return writeSucces;
+		}
+		std::vector<uint8_t> serialize () {
+			std::vector<uint8_t> out;
+			auto writeFunction = [&](uint8_t* data, size_t size) {
+				out.insert(out.end(), data, data + size);
+			};
+			bool writeSucces = write(writeFunction);
+			if (!writeSucces) {
+				return {};
+			}
+			return out;
+		}
+		// loads from file shouldn't be loaded into memory
+		bool load (std::filesystem::path blob_path) {
+			members.clear();
+
+
+			return true;
+		}
+		// leave in memory since data already there
+		bool load (std::vector<char> data) {
+			members.clear();
+
+			return true;
+		}
+		std::string serializeToHeader () {
+			std::string header;
+
+			return header;
+		}
+		bool serializeToHeader (std::filesystem::path save_path) {
+
+			return true;
+		}
+};
