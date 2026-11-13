@@ -551,6 +551,7 @@ class blob2 {
 				this->size = size;
 				this->name = name;
 			}
+			virtual ~member() = default;
 			virtual std::vector<uint8_t> read() = 0;
 		};
 		class file_member : public member {
@@ -604,26 +605,49 @@ class blob2 {
 				return dat;
 			}
 		};
+		const std::string headerEnd = "end of header";
 		bool write (std::function<void(uint8_t*, size_t)> writeFunction) {
 			size_t cur_offset = 0; //offset after header
 			size_t head_offset = 0;
 			size_t block_size = blob_size;
-			constexpr char headerEnd[] = "\nend of header\n";
 			block_size += sizeof(headerEnd) - 1;
 			std::cout << "size: " << block_size << "\n";
 			//write the header for each file
 			for (auto& i : members) {
+				size_t name_size = i->name.size();
+				writeFunction((uint8_t*)&name_size, sizeof(name_size));
 				writeFunction((uint8_t*)i->name.c_str(), i->name.size());
 				writeFunction((uint8_t*)&(i->size), sizeof(i->size));
 				writeFunction((uint8_t*)&cur_offset, sizeof(cur_offset));
-				head_offset += (i->name.size()) + sizeof(size_t) * 2; //bytes for the size and offset
+				head_offset += (i->name.size() + 2) + sizeof(size_t) * 3; //bytes for the size and offset
 				cur_offset += i->size;
 			}
-			writeFunction((uint8_t*)headerEnd, sizeof(headerEnd) - 1);
+			size_t end_size = headerEnd.size();
+			writeFunction((uint8_t*)&end_size, sizeof(end_size));
+			writeFunction((uint8_t*)headerEnd.c_str(), headerEnd.size());
 			// write data blocks
 			for (auto& i : members) {
 				auto data = i->read();
 				writeFunction((uint8_t*)data.data(), data.size());
+			}
+			return true;
+		}
+		bool read (std::function<void(char*, size_t)> readFunction, std::function<void(std::string, size_t, std::string, size_t)> memberCreate) {
+			blob_size = 0;
+			members.clear();
+			// read the header
+			while (true) {
+				std::array<char, 256> temp{};
+				size_t string_length, size, offset;
+				readFunction((char*)&string_length, sizeof(string_length));
+				readFunction(temp.data(), string_length);
+				std::string name(temp.data());
+				if (name.compare("end of header") == 0) {
+					break;
+				}
+				readFunction((char*)&size, sizeof(size));
+				readFunction((char*)&offset, sizeof(offset));
+				memberCreate("none", size, name, offset);
 			}
 			return true;
 		}
@@ -688,14 +712,28 @@ class blob2 {
 		}
 		// loads from file shouldn't be loaded into memory
 		bool load (std::filesystem::path blob_path) {
+			std::ifstream file(blob_path, std::ios::binary);
+			if (!file) {
+				return false;
+			}
+			blob_size = 0;
 			members.clear();
-
-
-			return true;
+			auto readFunc = [&](char* data, size_t size) {
+				file.read(data, size);
+			};
+			auto memberCreate = [&](std::string compression, size_t size, std::string name, size_t offset) {
+				std::unique_ptr<blob_member> member = std::make_unique<blob_member>("none", size, name, offset, blob_path);
+				blob_size += size;
+				members.push_back(std::move(member));
+			};
+			bool res = read(readFunc, memberCreate);
+			return res;
 		}
 		// leave in memory since data already there
 		bool load (std::vector<char> data) {
+			blob_size = 0;
 			members.clear();
+			
 
 			return true;
 		}

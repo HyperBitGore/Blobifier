@@ -38,6 +38,7 @@ int main() {
 	const auto secondPath = dir / "second.bin";
 	const auto blobPath = dir / "test.blob";
 	const auto extractedPath = dir / "extracted.bin";
+	const auto sourceBlobPath = dir / "source-files.blob";
 
 	const std::vector<char> firstData = {'\x00', '\x01', '\x7f', '\x80', '\xff', '\n', '\r', '\x00'};
 	const std::vector<char> secondData = {'a', '\n', 'b', '\r', '\x00', 'c', '\n'};
@@ -49,6 +50,8 @@ int main() {
 		{secondPath.string(), ""},
 	});
 	assert(blob::write::writeBlob(blob, blobPath.string()));
+	assert(std::filesystem::exists(blobPath));
+	std::cout << "[PASS] blob written to file\n";
 
 	auto first = blob::load::getFile(blobPath.string(), firstPath.string(), false);
 	assertBlobDataEquals(first, firstData);
@@ -72,6 +75,14 @@ int main() {
 	delete[] static_cast<char*>(memoryBlob.dat);
 	delete blob;
 
-	std::filesystem::remove_all(dir);
+	blob2 sourceBlob;
+	const auto sourceDir = std::filesystem::path(__FILE__).parent_path();
+	sourceBlob.addFile(sourceDir / "blobber.hpp", "blobber.hpp");
+	sourceBlob.addFile(sourceDir / "example.cpp", "example.cpp");
+	const auto serializedSourceBlob = sourceBlob.serialize();
+	sourceBlob.serialize(sourceBlobPath);
+	blob2 readBlob;
+	readBlob.load(sourceBlobPath);
+	//std::filesystem::remove_all(dir);
 	return 0;
 }
