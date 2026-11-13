@@ -1,6 +1,4 @@
 #include "blobber.hpp"
-
-#include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
@@ -20,15 +18,6 @@ void writeFile(const std::filesystem::path& path, const std::vector<char>& data)
 	file.write(data.data(), static_cast<std::streamsize>(data.size()));
 }
 
-void assertBlobDataEquals(const blob::BlobData& file, const std::vector<char>& expected) {
-	assert(file.size == expected.size());
-	assert(std::equal(expected.begin(), expected.end(), static_cast<const char*>(file.dat)));
-}
-
-void freeBlobData(blob::BlobData file) {
-	delete[] static_cast<char*>(file.dat);
-}
-
 }
 
 int main() {
@@ -36,8 +25,9 @@ int main() {
 	std::filesystem::create_directories(dir);
 	const auto firstPath = dir / "first.bin";
 	const auto secondPath = dir / "second.bin";
-	const auto blobPath = dir / "test.blob";
 	const auto extractedPath = dir / "extracted.bin";
+	const auto blobPath = dir / "blob.blob";
+	const auto blobRoundTripPath = dir / "blob-round-trip.blob";
 	const auto sourceBlobPath = dir / "source-files.blob";
 
 	const std::vector<char> firstData = {'\x00', '\x01', '\x7f', '\x80', '\xff', '\n', '\r', '\x00'};
@@ -45,44 +35,42 @@ int main() {
 	writeFile(firstPath, firstData);
 	writeFile(secondPath, secondData);
 
-	auto* blob = blob::write::blobifiy({
-		{firstPath.string(), ""},
-		{secondPath.string(), ""},
-	});
-	assert(blob::write::writeBlob(blob, blobPath.string()));
-	assert(std::filesystem::exists(blobPath));
-	std::cout << "[PASS] blob written to file\n";
+	blob memorySource;
+	memorySource.addFile(std::vector<uint8_t>(firstData.begin(), firstData.end()), "first.bin");
+	memorySource.addFile(std::vector<uint8_t>(secondData.begin(), secondData.end()), "second.bin");
+	const auto serializedMemoryBlob = memorySource.serialize();
+	assert(!serializedMemoryBlob.empty());
+	const std::vector<char> serializedMemoryChars(serializedMemoryBlob.begin(), serializedMemoryBlob.end());
 
-	auto first = blob::load::getFile(blobPath.string(), firstPath.string(), false);
-	assertBlobDataEquals(first, firstData);
-	freeBlobData(first);
-	std::cout << "[PASS] disk extraction preserves binary data\n";
+	blob memoryblob;
+	assert(memoryblob.load(serializedMemoryChars));
+	assert(memoryblob.serialize() == serializedMemoryBlob);
+	std::cout << "[PASS] blob loads and serializes in memory\n";
 
-	auto second = blob::load::getFile(blobPath.string(), secondPath.string(), false);
-	assertBlobDataEquals(second, secondData);
-	freeBlobData(second);
-	std::cout << "[PASS] disk extraction preserves text delimiters and NULs\n";
+	blob fileSource;
+	fileSource.addFile(firstPath, "first.bin");
+	fileSource.addFile(secondPath, "second.bin");
+	assert(fileSource.serialize(blobPath));
+	blob fileblob;
+	assert(fileblob.load(blobPath));
+	assert(fileblob.serialize(blobRoundTripPath));
+	assert(readFile(blobRoundTripPath) == readFile(blobPath));
+	std::cout << "[PASS] blob loads from and serializes to files\n";
 
-	blob::load::extractBlobAndWrite(blobPath.string(), firstPath.string(), extractedPath.string());
-	assert(readFile(extractedPath) == firstData);
-	std::cout << "[PASS] extracted file matches original bytes\n";
-
-	auto memoryBlob = blob::write::writeBlob(blob);
-	auto memoryFile = blob::load::getFile(memoryBlob.dat, memoryBlob.size, secondPath.string());
-	assertBlobDataEquals(memoryFile, secondData);
-	freeBlobData(memoryFile);
-	std::cout << "[PASS] memory blob extraction preserves data\n";
-	delete[] static_cast<char*>(memoryBlob.dat);
-	delete blob;
-
-	blob2 sourceBlob;
 	const auto sourceDir = std::filesystem::path(__FILE__).parent_path();
+	blob sourceBlob;
 	sourceBlob.addFile(sourceDir / "blobber.hpp", "blobber.hpp");
 	sourceBlob.addFile(sourceDir / "example.cpp", "example.cpp");
-	const auto serializedSourceBlob = sourceBlob.serialize();
-	sourceBlob.serialize(sourceBlobPath);
-	blob2 readBlob;
-	readBlob.load(sourceBlobPath);
+	assert(sourceBlob.serialize(sourceBlobPath));
+
+	blob loadedSourceBlob;
+	assert(loadedSourceBlob.load(sourceBlobPath));
+	const auto blobberSource = readFile(sourceDir / "blobber.hpp");
+	const auto exampleSource = readFile(sourceDir / "example.cpp");
+	assert(loadedSourceBlob.getFile("blobber.hpp") == std::vector<uint8_t>(blobberSource.begin(), blobberSource.end()));
+	assert(loadedSourceBlob.getFile("example.cpp") == std::vector<uint8_t>(exampleSource.begin(), exampleSource.end()));
+	std::cout << "[PASS] blob stores and loads source files\n";
+
 	//std::filesystem::remove_all(dir);
 	return 0;
 }

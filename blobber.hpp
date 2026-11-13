@@ -6,540 +6,15 @@
 #include <memory>
 #include <vector>
 #include <fstream>
-#include <sstream>
 #include <string>
-
-
-//add compression
-// -common lossless formats
-// -common lossy formats
-//mix compressed and non compressed files in a blob
-//make gui where you can generate blobs and basic one file headers
-
-namespace blob {
-
-	struct File {
-		std::string path;
-		std::string compression;
-	};
-
-	struct BlobData {
-		void* dat;
-		size_t size;
-	};
-
-
-	class load {
-	private:
-		//data reading
-		static void readDataPos(char* data, char* src, size_t size, size_t* pos) {
-			for (size_t i = 0; i < size; i++, (*pos)++) {
-				data[i] = src[*pos];
-			}
-		}
-		static std::string readNewLine(char* dst, size_t size, size_t* pos) {
-			std::string str = "";
-			for (size_t i = *pos; dst[i] != '\n' && i < size; i++) {
-				str.push_back(dst[i]);
-			}
-			*pos += str.size() + 1;
-			return str;
-		}
-		static void readDataFromString(std::string str, char* dst, size_t size, size_t pos) {
-			size_t j = 0;
-			for (size_t i = pos; i < str.size() && j < size; i++, j++) {
-				dst[j] = str[i];
-			}
-		}
-		//file header reading
-		static size_t getFileOffsetHeader(std::string path, std::string name) {
-			std::ifstream f;
-			f.open(path, std::ios::binary);
-			if (!f) {
-				return 0;
-			}
-			std::string str;
-			size_t p = 0;
-			while (std::getline(f, str)) {
-				p = str.find(name);
-				if (p != std::string::npos) {
-					p += name.size() + sizeof(size_t); //skipping file size
-					break;
-				}
-
-			}
-			f.seekg(p);
-			size_t off = 0;
-			f.read((char*)&off, sizeof(size_t));
-			f.close();
-			return off;
-		}
-		static size_t getFileSizeHeader(std::string path, std::string name) {
-			std::ifstream f;
-			f.open(path, std::ios::binary);
-			if (!f) {
-				return 0;
-			}
-			std::string str;
-			size_t p = 0;
-			while (std::getline(f, str)) {
-				p = str.find(name);
-				if (p != std::string::npos) {
-					p += name.size(); //skipping name
-					break;
-				}
-
-			}
-			f.seekg(p);
-			size_t siz = 0;
-			f.read((char*)&siz, sizeof(size_t));
-			f.close();
-			return siz;
-		}
-		static size_t getFileHeaderSize(std::string path, std::string name) {
-			size_t siz = 0;
-			std::ifstream f;
-			f.open(path, std::ios::binary);
-			std::string str;
-			while (std::getline(f, str)) {
-				if (str.find("end of header") != std::string::npos) {
-					f.close();
-					return siz;
-				}
-				siz += str.size();
-				if (!f.eof() && !f.fail()) {
-					siz++;
-				}
-			}
-			return siz;
-			f.close();
-		}
-		static size_t getFileOffsetHeader(void* dst, size_t size, std::string name) {
-
-			std::string str;
-			size_t p = 0;
-			while (true) {
-				str = readNewLine((char*)dst, size, &p);
-				p = str.find(name);
-				if (p != std::string::npos) {
-					p += name.size() + sizeof(size_t); //skipping file size
-					break;
-				}
-			}
-
-
-			size_t off = 0;
-			readDataFromString(str, (char*)&off, sizeof(off), p);
-
-			return off;
-		}
-		static size_t getFileSizeHeader(void* dst, size_t size, std::string name) {
-
-			std::string str;
-			size_t p = 0;
-			while (true) {
-				str = readNewLine((char*)dst, size, &p);
-				p = str.find(name);
-				if (p != std::string::npos) {
-					p += name.size(); //skipping file name
-					break;
-				}
-			}
-			size_t siz = 0;
-			readDataFromString(str, (char*)&siz, sizeof(siz), p);
-			return siz;
-		}
-		static size_t getFileHeaderSize(void* dst, size_t size, std::string name) {
-			size_t siz = 0;
-			size_t p = 0;
-			std::string str;
-			while (true) {
-				str = readNewLine((char*)dst, size, &p);
-				if (str.find("end of header") != std::string::npos) {
-					return siz;
-				}
-				siz += str.size() + 1;
-
-			}
-			return siz;
-
-		}
-	public:
-		//reads file from blob, from disk
-		static BlobData getFile(std::string path, std::string name, bool text = false) {
-			size_t size = getFileSizeHeader(path, name);
-			size_t offset = getFileOffsetHeader(path, name);
-			size_t header_size = getFileHeaderSize(path, name);
-			header_size += 14; //skipping the last \n
-			std::ifstream f;
-			if (text) {
-				f.open(path);
-			}
-			else {
-				f.open(path, std::ios::binary);
-			}
-			//have to skip past the header
-			//now going to offset from there
-			BlobData file;
-			f.seekg(header_size + offset);
-			void* dst = new char[size];
-			f.read((char*)dst, size);
-			file.dat = dst;
-			file.size = size;
-			f.close();
-			return file;
-		}
-		//reads file from blob, from memory
-		static BlobData getFile(void* loc, size_t siz, std::string name) {
-			size_t size = getFileSizeHeader(loc, siz, name);
-			size_t offset = getFileOffsetHeader(loc, siz, name);
-			size_t header_size = getFileHeaderSize(loc, siz, name);
-			header_size += 14; //skipping the last \n
-			//have to skip past the header
-			//now going to offset from there
-			BlobData file;
-			void* dst = std::malloc(size);
-			size_t pos = header_size + offset;
-			readDataPos((char*)dst, (char*)loc, size, &pos);
-			file.dat = dst;
-			file.size = size;
-
-			return file;
-		}
-		//extracts a file and writes it to disk
-		static void extractBlobAndWrite(std::string path, std::string name, std::string writepath) {
-			size_t size = getFileSizeHeader(path, name);
-			size_t offset = getFileOffsetHeader(path, name);
-			size_t header_size = getFileHeaderSize(path, name);
-			header_size += 14; //skipping the last \n
-			std::ifstream f;
-			f.open(path, std::ios::binary);
-			//have to skip past the header
-			//now going to offset from there
-			f.seekg(header_size + offset);
-			std::ofstream f2;
-			f2.open(writepath, std::ios::binary);
-			for (size_t i = 0; i < size; i++) {
-				char c;
-				f.read(&c, 1);
-				f2 << c;
-			}
-			f2.close();
-			f.close();
-		}
-	};
-
-	
-
-	class Blob {
-	private:
-		std::vector<File> files;
-	public:
-		void addFile(File f) {
-			files.push_back(f);
-		}
-		std::vector<File>& getFiles() {
-			return files;
-		}
-	};
-
-	class write {
-	private:
-		static size_t getFileSize(std::string path) {
-			std::ifstream f;
-			f.open(path, std::ios::binary);
-			if (f) {
-				size_t s = 0;
-				std::string str;
-				while (std::getline(f, str)) {
-					s += str.size();
-					if (!f.eof() && !f.fail()) {
-						s++;
-					}
-				}
-				f.close();
-				return s;
-			}
-			return 0;
-		}
-		static size_t countOccur(std::string str, char c) {
-			size_t count = 0;
-			for (auto& i : str) {
-				if (i == c) {
-					count++;
-				}
-			}
-			return count;
-		}
-		
-
-		static void writeDataPos(char* data, char* cpy, size_t size, size_t* pos) {
-			for (size_t i = 0; i < size; i++) {
-				data[(*pos) + i] = cpy[i];
-			}
-			*pos += size;
-		}
-		
-		static std::string convertFileToHexArray(std::string file_path) {
-			std::ifstream f;
-			f.open(file_path);
-			std::stringstream sstr;
-			std::string line;
-			int i = 0;
-			while (std::getline(f, line)) {
-				for (int j = 0; j < line.size(); j++) {
-					sstr << "0x" << std::hex << (int)line[j] << ",";
-					i++;
-					if (i >= 10) {
-						sstr << "\n";
-						i = 0;
-					}
-				}
-			}
-
-			f.close();
-			std::string str(sstr.str());
-			return str;
-		}
-		static std::string convertStringToHexArray(std::string str) {
-			std::stringstream sstr;
-			for (int i = 0; i < str.size(); i++) {
-				sstr << "0x" << std::hex << (int)str[i] << ",";
-				if (i % 10 == 0) {
-					sstr << "\n";
-				}
-			}
-			return std::string(sstr.str());
-		}
-		static std::string convertSizetString(size_t n) {
-			std::string m;
-			char* t = (char*)&n;
-			for (int i = 0; i < sizeof(n); i++) {
-				m.push_back(t[i]);
-			}
-			return m;
-		}
-
-		static std::string getFileName(std::string path) {
-			size_t pos = 0;
-			size_t c = countOccur(path, '\\');
-			for (; pos < path.size() && c > 0; pos++) {
-				if (path[pos] == '\\') {
-					c--;
-				}
-			}
-			std::string str;
-			for (; pos < path.size(); pos++) {
-				str.push_back(path[pos]);
-			}
-			return str;
-		}
-		static bool blobWrite (Blob* blob, std::function<void(char*, size_t)> writeFunction) {
-			//header will contain name of file then the size of the file, and then the offset in the file
-			size_t cur_offset = 0; //offset after header
-			size_t head_offset = 0;
-			//get block size needed
-			size_t block_size = 0;
-			for (auto& i : blob->getFiles()) {
-				block_size += getFileSize(i.path);
-				block_size += getFileName(i.path).size() + (sizeof(size_t) * 2);
-			}
-			constexpr char headerEnd[] = "\nend of header\n";
-			block_size += sizeof(headerEnd) - 1;
-			std::cout << "size: " << block_size << "\n";
-			//write the header for each file
-			for (auto& i : blob->getFiles()) {
-				std::string name = getFileName(i.path);
-				writeFunction((char*)name.c_str(), name.size());
-				size_t size = getFileSize(i.path);
-				writeFunction((char*)&size, sizeof(size));
-				//f << size;
-				writeFunction((char*)&cur_offset, sizeof(cur_offset));
-				//f << cur_offset;
-				head_offset += (i.path.size()) + sizeof(size_t) * 2; //bytes for the size and offset
-				cur_offset += size;
-			}
-			writeFunction((char*)headerEnd, sizeof(headerEnd) - 1);
-			//write the data based on location in blob
-			for (auto& i : blob->getFiles()) {
-				std::ifstream f2;
-				f2.open(i.path, std::ios::binary);
-				std::string str;
-				while (std::getline(f2, str)) {
-					//prune the " into \\x22
-					writeFunction((char*)str.c_str(), str.size());
-					if (!f2.eof() && !f2.fail()) {
-						char c = '\n';
-						writeFunction(&c, 1);
-					}
-				}
-				f2.close();
-			}
-
-
-			return true;
-		}
-	public:
-		//turns a list of files into blob
-		static Blob* blobifiy(std::vector<File> files) {
-			Blob* b = new Blob;
-			for (auto& i : files) {
-				b->addFile(i);
-			}
-			return b;
-		}
-		//blob to be written and the path you want to write the file
-		static bool writeBlob(Blob* blob, std::string file_path) {
-			std::ofstream f;
-			f.open(file_path, std::ios::binary);
-			if (!f) {
-				return false;
-			}
-			auto writeToFile = [&] (char* data, size_t size) {
-				f.write(data, size);
-			};
-			return blobWrite(blob, writeToFile);
-		}
-		//for creating blobs in memory, generates the memory for you
-		static BlobData writeBlob(Blob* blob) {
-			//header will contain name of file then the size of the file, and then the offset in the file
-			size_t cur_offset = 0; //offset after header
-			size_t head_offset = 0;
-			//get block size needed
-			size_t block_size = 0;
-			for (auto& i : blob->getFiles()) {
-				block_size += getFileSize(i.path);
-				block_size += getFileName(i.path).size() + (sizeof(size_t) * 2);
-			}
-			block_size += sizeof("\nend of header\n");
-			std::cout << "size: " << block_size << "\n";
-			char* data = new char[block_size];
-				size_t pos = 0;
-			auto writeData = [&](char* n_data, size_t size) {
-				writeDataPos(data, n_data, size, &pos);
-			};
-			blobWrite(blob, writeData);
-			return {(void*)data, block_size};
-		}
-		//writes the blob as header file to the file path
-		static bool writeAsHeader(Blob* blob, std::string file_path, std::string block_name) {
-			std::ofstream f;
-			f.open(file_path, std::ios::binary);
-			if (!f) {
-				return false;
-			}
-			size_t file_size = 1;
-			for (auto& i : blob->getFiles()) {
-				file_size += getFileSize(i.path);
-				file_size += getFileName(i.path).size() + (sizeof(size_t) * 2);
-			}
-			file_size += 14;
-			//writing the basic c header stuff
-			f << "#include <stdlib.h>\n";
-			//writing the char* and the function
-			f << "unsigned char* load" + block_name + " (){ \n";
-
-			f << "unsigned char temp[ " + std::to_string(file_size) + "] = {\n";
-			//header will contain name of file then the size of the file, and then the offset in the file
-			size_t cur_offset = 0; //offset after header
-			size_t head_offset = 0;
-			//write the header for each file
-			for (auto& i : blob->getFiles()) {
-				f << convertStringToHexArray(getFileName(i.path));
-				//f << getFileName(i.path);
-				size_t size = getFileSize(i.path);
-				
-				f << convertStringToHexArray(convertSizetString(size));
-				//f.write((char*)&size, sizeof(size));
-				//f << size;
-				
-				f << convertStringToHexArray(convertSizetString(cur_offset));
-				//f.write((char*)&cur_offset, sizeof(cur_offset));
-				//f << cur_offset;
-				head_offset += (i.path.size()) + sizeof(size_t) * 2; //bytes for the size and offset
-				cur_offset += size;
-			}
-			f << convertStringToHexArray("\nend of header\n");
-			//write the data based on location in blob
-			for (auto& i : blob->getFiles()) {
-				std::ifstream f2;
-				f2.open(i.path, std::ios::binary);
-				std::string str;
-				while (std::getline(f2, str)) {
-					if (!f2.eof() && !f2.fail()) {
-						
-						str.push_back('\n');
-					}
-					std::string str2 = convertStringToHexArray(str);
-					f << str2;
-				}
-				f2.close();
-			}
-			//writing the end of the char* and the final stuff needed for the rest of the header
-			//f << "\";\n";
-			f << "};\n";
-			f << "unsigned char* " + block_name + " = (unsigned char*)malloc(" + std::to_string(file_size) + ");\n";
-			f << "for(int i = 0; i < " + std::to_string(file_size) + ";i++){\n";
-			f << block_name + "[i] = temp[i];\n";
-			f << "}\n";
-			f << "return " + block_name + ";\n}";
-			f.close();
-			return true;
-		}
-		//writes a single file into a c header file
-		static bool writeFileHeader(std::string file, std::string dest, std::string block_name) {
-			std::ofstream f;
-			f.open(dest);
-			if (!f) {
-				return false;
-			}
-			//writing the basic c header stuff
-			f << "#include <stdlib.h>\n";
-			//writing the char* and the function
-			f << "unsigned char* load" + block_name + " (){ \n";
-			size_t file_size = getFileSize(file);
-			f << "unsigned char temp[ " + std::to_string(file_size) + "] = {\n";
-			//writing the file into the array
-			std::ifstream f2;
-			f2.open(file, std::ios::binary);
-			if (!f2) {
-				return false;
-			}
-			std::string str;
-			while (std::getline(f2, str)) {
-				if (!f2.eof() && !f2.fail()) {
-					str.push_back('\n');
-				}
-				std::string str2 = convertStringToHexArray(str);
-				f << str2;
-			}
-			f2.close();
-			f << "};\n";
-			f << "unsigned char* " + block_name + " = (unsigned char*)malloc(" + std::to_string(file_size) + ");\n";
-			f << "for(int i = 0; i < " + std::to_string(file_size) + ";i++){\n";
-			f << block_name + "[i] = temp[i];\n";
-			f << "}\n";
-			f << "return " + block_name + ";\n}";
-
-			f.close();
-			return true;
-		}
-		
-		
-		
-	};
-
-
-}
+#include <tuple>
 
 // TODO:
-// - add load function
 // - add header function
-// - convert tests
 // - add compression
 // - cli blobbing program 
 
-class blob2 {
+class blob {
 	private:
 		class member {
 			public:
@@ -654,14 +129,14 @@ class blob2 {
 		std::vector<std::unique_ptr<member>> members;
 		size_t blob_size = 0;
 	public:
-		blob2 () = default;
+		blob () = default;
 
 		// move
-		blob2 (blob2&& b) {
+		blob (blob&& b) {
 			this->members = std::move(b.members);
 			this->blob_size = b.blob_size;
 		}
-		blob2& operator=(blob2&& b) {
+		blob& operator=(blob&& b) {
 			this->members = std::move(b.members);
 			this->blob_size = b.blob_size;
 			return *this;
@@ -685,11 +160,19 @@ class blob2 {
 			std::unique_ptr<data_member> member = std::make_unique<data_member>("none", n_data.size(), name, n_data);
 			members.push_back(std::move(member));
 		}
+		std::vector<uint8_t> getFile (const std::string& name) {
+			for (auto& member : members) {
+				if (member->name == name) {
+					return member->read();
+				}
+			}
+			return {};
+		}
 		// file loading/writing
 		bool serialize (std::filesystem::path save_path) {
 			std::ofstream file (save_path, std::ios::binary);
 			if (!file) {
-				return true;
+				return false;
 			}
 			auto writeFunction = [&](uint8_t* data, size_t size) {
 				file.write((char*)data, size);
@@ -697,7 +180,7 @@ class blob2 {
 			bool writeSucces = write(writeFunction);
 
 			file.close();
-			return writeSucces;
+			return writeSucces && static_cast<bool>(file);
 		}
 		std::vector<uint8_t> serialize () {
 			std::vector<uint8_t> out;
@@ -721,21 +204,45 @@ class blob2 {
 			auto readFunc = [&](char* data, size_t size) {
 				file.read(data, size);
 			};
-			auto memberCreate = [&](std::string compression, size_t size, std::string name, size_t offset) {
+			std::vector<blob_member*> loaded_members;
+			auto memberCreate = [&](std::string, size_t size, std::string name, size_t offset) {
 				std::unique_ptr<blob_member> member = std::make_unique<blob_member>("none", size, name, offset, blob_path);
 				blob_size += size;
+				loaded_members.push_back(member.get());
 				members.push_back(std::move(member));
 			};
 			bool res = read(readFunc, memberCreate);
+			const size_t data_start = static_cast<size_t>(file.tellg());
+			for (auto* member : loaded_members) {
+				member->offset += data_start;
+			}
 			return res;
 		}
 		// leave in memory since data already there
-		bool load (std::vector<char> data) {
+		bool load (const std::vector<char>& data) {
 			blob_size = 0;
 			members.clear();
-			
-
-			return true;
+			size_t data_offset = 0;
+			auto readFunc = [&](char* n_data, size_t size) {
+				for (size_t i = 0; i < size && data_offset < data.size(); i++, data_offset++) {
+					n_data[i] = data[data_offset];
+				}
+			};
+			std::vector<std::tuple<std::string, size_t, std::string, size_t>> pending;
+			auto memberCreate = [&](std::string compression, size_t size, std::string name, size_t offset) {
+				pending.emplace_back(compression, size, name, offset);
+			};
+			bool res = read(readFunc, memberCreate);
+			for (auto& [compression, size, name, offset] : pending) {
+				std::vector<uint8_t> n_data;
+				for (size_t i = 0; i < size && data_offset + offset + i < data.size(); i++) {
+					n_data.push_back(data[data_offset + offset + i]);
+				}
+				std::unique_ptr<data_member> member = std::make_unique<data_member>(compression, size, name, n_data);
+				blob_size += size;
+				members.push_back(std::move(member));
+			}
+			return res;
 		}
 		std::string serializeToHeader () {
 			std::string header;
