@@ -10,7 +10,6 @@
 #include <tuple>
 
 // TODO:
-// - add header function
 // - add compression
 // - cli blobbing program 
 
@@ -245,12 +244,36 @@ class blob {
 			return res;
 		}
 		std::string serializeToHeader () {
-			std::string header;
-
+			static constexpr char hex[] = "0123456789abcdef";
+			const auto data = serialize();
+			std::string header =
+				"#pragma once\n"
+				"#include <cstddef>\n"
+				"#include <cstdint>\n\n"
+				"inline constexpr std::uint8_t blob_data[] = {\n";
+			for (size_t i = 0; i < data.size(); i++) {
+				if (i % 16 == 0) {
+					header += "\t";
+				}
+				header += "0x";
+				header += hex[data[i] >> 4];
+				header += hex[data[i] & 0x0f];
+				header += i + 1 == data.size() ? "\n" : ", ";
+				if (i % 16 == 15 && i + 1 != data.size()) {
+					header += "\n";
+				}
+			}
+			header +=
+				"};\n"
+				"inline constexpr std::size_t blob_size = sizeof(blob_data);\n";
 			return header;
 		}
 		bool serializeToHeader (std::filesystem::path save_path) {
-
-			return true;
+			std::ofstream file(save_path);
+			if (!file) {
+				return false;
+			}
+			file << serializeToHeader();
+			return static_cast<bool>(file);
 		}
 };

@@ -29,6 +29,7 @@ int main() {
 	const auto blobPath = dir / "blob.blob";
 	const auto blobRoundTripPath = dir / "blob-round-trip.blob";
 	const auto sourceBlobPath = dir / "source-files.blob";
+	const auto headerPath = dir / "blob.hpp";
 
 	const std::vector<char> firstData = {'\x00', '\x01', '\x7f', '\x80', '\xff', '\n', '\r', '\x00'};
 	const std::vector<char> secondData = {'a', '\n', 'b', '\r', '\x00', 'c', '\n'};
@@ -46,6 +47,12 @@ int main() {
 	assert(memoryblob.load(serializedMemoryChars));
 	assert(memoryblob.serialize() == serializedMemoryBlob);
 	std::cout << "[PASS] blob loads and serializes in memory\n";
+
+	const auto serializedHeader = memorySource.serializeToHeader();
+	assert(serializedHeader.find("inline constexpr std::uint8_t blob_data[]") != std::string::npos);
+	assert(memorySource.serializeToHeader(headerPath));
+	assert(readFile(headerPath) == std::vector<char>(serializedHeader.begin(), serializedHeader.end()));
+	std::cout << "[PASS] blob serializes to a C++ header\n";
 
 	blob fileSource;
 	fileSource.addFile(firstPath, "first.bin");
