@@ -1,9 +1,11 @@
 #include "blobber.hpp"
 #include <cassert>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <string>
 #include <vector>
 
 namespace {
@@ -18,9 +20,13 @@ void writeFile(const std::filesystem::path& path, const std::vector<char>& data)
 	file.write(data.data(), static_cast<std::streamsize>(data.size()));
 }
 
+std::string shellQuote(const std::filesystem::path& path) {
+	return "'" + path.string() + "'";
 }
 
-int main() {
+}
+
+int main(int argc, char* argv[]) {
 	const auto dir = std::filesystem::temp_directory_path() / "blobifier-integrity-test";
 	std::filesystem::create_directories(dir);
 	const auto firstPath = dir / "first.bin";
@@ -65,6 +71,7 @@ int main() {
 	std::cout << "[PASS] blob loads from and serializes to files\n";
 
 	const auto sourceDir = std::filesystem::path(__FILE__).parent_path();
+	const auto cliPath = std::filesystem::absolute(argv[0]).parent_path() / "blob";
 	blob sourceBlob;
 	sourceBlob.addFile(sourceDir / "blobber.hpp", "blobber.hpp");
 	sourceBlob.addFile(sourceDir / "example.cpp", "example.cpp");
@@ -77,6 +84,39 @@ int main() {
 	assert(loadedSourceBlob.getFile("blobber.hpp") == std::vector<uint8_t>(blobberSource.begin(), blobberSource.end()));
 	assert(loadedSourceBlob.getFile("example.cpp") == std::vector<uint8_t>(exampleSource.begin(), exampleSource.end()));
 	std::cout << "[PASS] blob stores and loads source files\n";
+
+	const auto cliSourceBlobPath = dir / "cli-source-files.blob";
+	const auto cliSourceCommand = shellQuote(cliPath) + " -o " + shellQuote(cliSourceBlobPath) + " " +
+		shellQuote(sourceDir / "blobber.hpp") + " " + shellQuote(sourceDir / "blob.cpp") + " " +
+		shellQuote(sourceDir / "example.cpp");
+	assert(std::system(cliSourceCommand.c_str()) == 0);
+	blob loadedCliSourceBlob;
+	assert(loadedCliSourceBlob.load(cliSourceBlobPath));
+	assert(loadedCliSourceBlob.getFile("blobber.hpp") == std::vector<uint8_t>(blobberSource.begin(), blobberSource.end()));
+	const auto blobSource = readFile(sourceDir / "blob.cpp");
+	assert(loadedCliSourceBlob.getFile("blob.cpp") == std::vector<uint8_t>(blobSource.begin(), blobSource.end()));
+	assert(loadedCliSourceBlob.getFile("example.cpp") == std::vector<uint8_t>(exampleSource.begin(), exampleSource.end()));
+	std::cout << "[PASS] cli stores project source files\n";
+
+	const auto cliBlobPath = dir / "cli.blob";
+	const auto cliCommand = shellQuote(cliPath) + " -o " + shellQuote(cliBlobPath) + " " +
+		shellQuote(firstPath) + " " + shellQuote(secondPath);
+	assert(std::system(cliCommand.c_str()) == 0);
+	blob loadedCliBlob;
+	assert(loadedCliBlob.load(cliBlobPath));
+	assert(loadedCliBlob.getFile("first.bin") == std::vector<uint8_t>(firstData.begin(), firstData.end()));
+	assert(loadedCliBlob.getFile("second.bin") == std::vector<uint8_t>(secondData.begin(), secondData.end()));
+	std::cout << "[PASS] cli creates a blob with -o\n";
+
+	const auto defaultBlobPath = dir / "out.blob";
+	const auto defaultCliCommand = "cd " + shellQuote(dir) + " && " + shellQuote(cliPath) + " " +
+		shellQuote(firstPath);
+	assert(std::system(defaultCliCommand.c_str()) == 0);
+	assert(std::filesystem::exists(defaultBlobPath));
+	blob loadedDefaultBlob;
+	assert(loadedDefaultBlob.load(defaultBlobPath));
+	assert(loadedDefaultBlob.getFile("first.bin") == std::vector<uint8_t>(firstData.begin(), firstData.end()));
+	std::cout << "[PASS] cli defaults to out.blob\n";
 
 	//std::filesystem::remove_all(dir);
 	return 0;

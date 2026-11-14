@@ -9,19 +9,13 @@
 #include <string>
 #include <tuple>
 
-// TODO:
-// - add compression
-// - cli blobbing program 
-
 class blob {
 	private:
 		class member {
 			public:
-			std::string compression;
 			std::string name;
 			size_t size;
-			member (std::string compression, size_t size, std::string name) {
-				this->compression = compression;
+			member (size_t size, std::string name) {
 				this->size = size;
 				this->name = name;
 			}
@@ -31,7 +25,7 @@ class blob {
 		class file_member : public member {
 			public:
 			std::filesystem::path path;
-			file_member (std::string compression, size_t size, std::string name, std::filesystem::path path) : member (compression, size, name) {
+			file_member (size_t size, std::string name, std::filesystem::path path) : member (size, name) {
 				this->path = path;
 			} 
 			std::vector<uint8_t> read() override {
@@ -50,7 +44,7 @@ class blob {
 		class data_member : public member {
 			public:
 			std::vector<uint8_t> dat;
-			data_member (std::string compression, size_t size, std::string name, std::vector<uint8_t> dat) : member (compression, size, name) {
+			data_member (size_t size, std::string name, std::vector<uint8_t> dat) : member (size, name) {
 				this->dat = dat;
 			}
 			std::vector<uint8_t> read() override {
@@ -61,7 +55,7 @@ class blob {
 			public:
 			size_t offset;
 			std::filesystem::path path;
-			blob_member (std::string compression, size_t size, std::string name, size_t offset, std::filesystem::path path) : member (compression, size, name) {
+			blob_member (size_t size, std::string name, size_t offset, std::filesystem::path path) : member (size, name) {
 				this->offset = offset;
 				this->path = path;
 			}
@@ -145,18 +139,18 @@ class blob {
 		void addFile (std::filesystem::path path, std::string name) {
 			size_t size = std::filesystem::file_size(path);
 			blob_size += size;
-			std::unique_ptr<file_member> member = std::make_unique<file_member>("none", size, name, path);
+			std::unique_ptr<file_member> member = std::make_unique<file_member>(size, name, path);
 			members.push_back(std::move(member));
 		}
 		void addFile (std::vector<uint8_t> data, std::string name) {
 			blob_size += data.size();
-			std::unique_ptr<data_member> member = std::make_unique<data_member>("none", data.size(), name, data);
+			std::unique_ptr<data_member> member = std::make_unique<data_member>(data.size(), name, data);
 			members.push_back(std::move(member));
 		}
 		void addFile (uint8_t* data, size_t size, std::string name) {
 			std::vector<uint8_t> n_data(data, data + size);
 			blob_size += size;
-			std::unique_ptr<data_member> member = std::make_unique<data_member>("none", n_data.size(), name, n_data);
+			std::unique_ptr<data_member> member = std::make_unique<data_member>(n_data.size(), name, n_data);
 			members.push_back(std::move(member));
 		}
 		std::vector<uint8_t> getFile (const std::string& name) {
@@ -205,7 +199,7 @@ class blob {
 			};
 			std::vector<blob_member*> loaded_members;
 			auto memberCreate = [&](std::string, size_t size, std::string name, size_t offset) {
-				std::unique_ptr<blob_member> member = std::make_unique<blob_member>("none", size, name, offset, blob_path);
+				std::unique_ptr<blob_member> member = std::make_unique<blob_member>(size, name, offset, blob_path);
 				blob_size += size;
 				loaded_members.push_back(member.get());
 				members.push_back(std::move(member));
@@ -237,7 +231,7 @@ class blob {
 				for (size_t i = 0; i < size && data_offset + offset + i < data.size(); i++) {
 					n_data.push_back(data[data_offset + offset + i]);
 				}
-				std::unique_ptr<data_member> member = std::make_unique<data_member>(compression, size, name, n_data);
+				std::unique_ptr<data_member> member = std::make_unique<data_member>(size, name, n_data);
 				blob_size += size;
 				members.push_back(std::move(member));
 			}
